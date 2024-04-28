@@ -1,0 +1,557 @@
+---
+title: 'BNDMR: Test Data Scientist'
+author: "Sambou DIAO / Data Scientist"
+output: 
+  pdf_document:
+    number_sections: true
+    df_print: kable
+    toc: true
+    citation_package: natbib
+date: "`r format(Sys.Date(), '%d-%m-%Y')`"
+header-includes:
+  - \usepackage{titling}
+  - \pretitle{\begin{center}\LARGE\bfseries}
+  - \posttitle{\end{center}\vspace{\baselineskip}}
+  - \preauthor{\begin{center}\large}
+  - \postauthor{\end{center}\vspace{\baselineskip}}
+  - \predate{\begin{center}\large}
+  - \postdate{\end{center}\vspace{\baselineskip}}
+  - \let\oldtableofcontents\tableofcontents
+  - \renewcommand{\tableofcontents}{\newpage\oldtableofcontents}
+---
+
+\listoffigures
+\listoftables
+\newpage
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE,
+                      fig.align = 'center', out.width = "70%", 
+                      out.height = "60%",
+                      fig.pos = '!ht'
+                      )
+
+# Les packages fig.pos :'ht'
+library(tinytex) # Generate pdf output
+
+library(dplyr) # data manipulation
+library(tidyr) # data manipulation
+library(lubridate) # date
+library(VIM) # missing value
+library(forcats) # recode
+library(tableone) # stat desc
+library(purrr) # operations
+library(readr) # read file
+library(rstatix) # Tests
+library(ggplot2) # graphique
+library(ggpubr) # Graphics
+library(knitr) # pdf document
+```
+
+# Introduction
+
+L'épidermolyse bulleuse (EB) est une maladie dermatologique rare et potentiellement grave, caractérisée par la formation de bulles et de cloques sur la peau en réponse à un traumatisme mineur ou à une friction. Elle est généralement due à des mutations génétiques affectant les protéines qui maintiennent la structure et la cohésion de la peau.
+
+La classification de l'EB est complexe en raison de sa variabilité clinique et génétique. Selon la nomenclature d'Orphanet des maladies rares, il existe plusieurs types d'EB, parmi lesquels l'EB simple et l'EB jonctionnelle. Ces sous-types se distinguent par les protéines spécifiques touchées et la gravité des symptômes.
+
+L'étude menée en collaboration avec la filière FIMARAD vise à approfondir la compréhension de l'EB, en se concentrant notamment sur les données démographiques des patients affectés. L'objectif est d'analyser ces données pour extraire des informations précieuses sur la répartition des différents types d'EB dans la population étudiée, ainsi que sur les caractéristiques démographiques des patients.
+
+De plus, une base de données complémentaire recueillant les niveaux de plomb dans le sang des patients a été mise à disposition. Cette information est cruciale car elle permet d'explorer l'impact potentiel des différents types d'EB sur la réponse au traitement médicamenteux. En comparant les concentrations de plomb chez des patients présentant différents types d'EB mais traités avec le même agent, il est possible d'évaluer si ces sous-types influent sur l'efficacité ou la toxicité du médicament.
+
+En résumé, cette étude vise à combler les lacunes dans la compréhension de l'EB, en examinant à la fois les données démographiques des patients et les niveaux de plomb dans le sang, dans le but d'améliorer la prise en charge et le traitement de cette maladie dermatologique rare.
+
+# Exploration des données des patients atteints par EB
+
+## Données: 
+
+### Présentation et préparation des données des patients
+
+Pour cet exercice, trois fichiers de données sont fournis sous format RDS:
+
+-  Fichier patients: données démographiques des patients
+-  Fichier diagnostics: données diagnostics des patients
+-  Fichier TLC: Fichier du niveau de plomb de patients sur 6 semaines
+
+```{r}
+# Load Data 
+data_patients = readRDS(paste0(here::here("data"), "/patients.RDS")) # 184
+# Exclure les lignes avec des idmr en double --> 1 obs
+data_patients <- data_patients[!duplicated(data_patients$idmr), ]
+
+data_obs_plomb = readRDS(paste0(here::here("data"), "/obs_plomb.RDS")) # 100
+# Exclure les lignes avec des idmr en double --> 2 obs
+data_obs_plomb <- data_obs_plomb[!duplicated(data_obs_plomb$idmr), ]
+
+data_diagnostics = readRDS(paste0(here::here("data"), "/diagnostics.RDS")) # 162
+# Exclure les lignes avec des idmr en double --> 2 obs
+data_diagnostics <- data_diagnostics[!duplicated(data_diagnostics$idmr), ]
+
+```
+
+Après avoir importé les fichiers dans R, nous avons examiné la complétude et la qualité des données.
+
+Dans le fichier des patients, nous avons identifié un doublon où le statut "alive" était à la fois 0 et 1. Cette situation semble être une erreur car un patient ne peut pas être à la fois en vie et mort. Par conséquent, une ligne a été supprimée. Le fichier compte désormais 183 patients et 5 variables.
+
+Dans les deux autres fichiers, "diagnostics" et "TLC", nous avons également repéré deux doublons chacun, que nous avons supprimés. Le fichier "diagnostics" contient maintenant 160 observations et 5 variables, tandis que le fichier "TLC" comprend 98 observations et 5 colonnes.
+
+
+```{r}
+# Jointures des tables
+df = dplyr::left_join(data_patients, data_obs_plomb, by="idmr")
+df1 = dplyr::left_join(df, data_diagnostics, by="idmr")
+
+# Create type of EB: 1="EB Simple"; 2="EB Jonctionnelle"
+
+df2 = df1 %>% dplyr::mutate(
+  type_EB = case_when(
+    diagnostic %in% c("304", "257", "158684") ~ "1",
+    diagnostic %in% c("305", "251393", "79403") ~ "2",
+    TRUE ~ " "
+  ))
+
+# Age du patient
+df2$age = year(Sys.Date()) - df2$birthyear
+
+# Classe d'âge
+df3 = df2 %>% dplyr::mutate(
+  age_cat = case_when(
+    age <= 34 ~ "25-34",
+    age >= 35 & age <= 44 ~ "35-44",
+    age >= 45 & age <= 54 ~ "45-54",
+    age >= 55 & age <= 64 ~ "55-64",
+    age >= 65 & age <= 75 ~ "65-75",
+    TRUE ~ ">75"
+  ))
+
+df3$inclusion_year <- as.factor(as.character(year(df3$inclusion)))
+df3$last_activity_year <- as.factor(as.character(year(df3$last_activity)))
+
+# Obtenir la structure du dataframe
+structure_df <- capture.output(str(df3))
+
+# Afficher la structure sous forme de tableau dans le PDF
+knitr::kable(structure_df, format = "latex", caption = "Structure du dataframe")
+# str(df3)
+```
+
+Comme les trois fichiers partagent une clé commune (l'identifiant du patient : idmr), nous les avons fusionnés pour obtenir une seule table à analyser. Cette table contient donc 183 patients et 13 colonnes. De plus, cinq nouvelles variables ont été créées pour enrichir les données et répondre aux besoins d'analyse (voir table 1). Parmi celles-ci, la variable "type_EB" qui catégorise le diagnostic en deux types :
+
+-  type_EB = "EB simple" si dignostic est "304"ou "257" ou "158684";
+-  type_EB = "EB Jonctionnelle" si dignostic est "305" ou "251393" ou "79403"
+
+Un travail de conversion des types de variables a été effectué pour assurer la cohérence des données.
+
+### Qualité des variables et critères d'exclusions
+
+Nous avons examiné la complétude de nos données afin d'évaluer la fiabilité de notre ensemble de données. Les variables présentant le plus de données manquantes sont la concentration du plomb au fil du temps, avec un taux de 46%, suivi de la variable "level" à 32%, et "diagnostic" à 12% (voir Figure 1).
+
+Nous observons que seulement 43% des patients disposent de données complètes pour toutes les variables. En revanche, 12% des patients ne disposent d'aucune information concernant la concentration du plomb, le diagnostic, le niveau de la maladie, l'inclusion dans l'étude ou leur dernière activité.
+
+Étant donné que l'objectif principal de notre analyse est d'étudier les sujets atteints de l'épidermolyse bulleuse (EB), il est impératif de disposer d'un diagnostic confirmé pour chaque patient inclus dans l'étude. Par conséquent, il a été décidé d'exclure les patients pour lesquels le diagnostic est manquant. Cette exclusion concerne 23 sur 183 patients, soit environ 12% de l'échantillon total.
+
+Cette décision garantit la rigueur et la validité de notre analyse, en nous assurant de travailler avec un ensemble de données fiable et représentatif des patients atteints de l'épidermolyse bulleuse.
+
+```{r fig1, results='hide', fig.show='asis', fig.cap = ("Histogramme et schéma des données manquantes")}
+# df_clean = df_clean %>% dplyr::select(-idmr)
+Etude_NA <- aggr(df3,
+                  col=c('navyblue','red'),
+                  numbers=TRUE,
+                  sortVars=TRUE,
+                  labels=names(df3),
+                  cex.axis=.7, gap=3,
+                  ylab=c("Histogram of missing data","Pattern"))
+# Histogramme et schéma des données manquantes
+```
+
+
+```{r}
+# Exclusion des sujets sans diagnostic
+df_clean_EB = df3 %>% dplyr::filter(!is.na(diagnostic)) # 160
+
+# Appliquer as.factor() à toutes les colonnes de type character
+df_clean_EB <- data.frame(lapply(df_clean_EB, function(x) {
+  if(is.character(x)) {
+    as.factor(x)
+  } else {
+    x
+  }
+}))
+
+# Convertir la variable alive en factor
+df_clean_EB$alive <- as.factor(as.character(df_clean_EB$alive))
+df_clean_EB$alive <- fct_recode(df_clean_EB$alive,
+                              no="0",
+                              yes="1")
+
+df_clean_EB$type_EB <- fct_recode(df_clean_EB$type_EB,
+                              "EB simple"="1",
+                              "EB jonctionelle"="2")
+# str(df_clean_EB)
+```
+
+
+## Description des caractéristiques des patients
+
+La population étudiée était composée de 183 patients, parmi lesquels 82 présentaient une épidermolyse bulleuse simple (EBS), soit 51,2 % des patients, tandis que 78 présentaient une épidermolyse bulleuse jonctionnelle (EBJ), représentant 48,8 % des patients. L'âge médian des patients était de 64,5 ans, avec 34,4 % des patients âgés de plus de 75 ans. Aucune différence significative n'a été observée dans l'âge médian entre les patients atteints d'EBS et d'EBJ (voir Table 2).
+
+Concernant le stade de la maladie (level) et l'année d'inclusion des patients, aucune différence significative n'a été observée (voir Table 2).
+
+Pour les niveaux de plomb dans le sang, la concentration moyenne de plomb variait au fil du temps, par exemple de 18,96 à la semaine 1 (W1) à 19,60 à la semaine 4 (W4). Cependant, la concentration médiane était de 25,35 à la semaine 0 (W0) et de 21,25 à la semaine 6 (W6) (voir Table 2).
+
+En ce qui concerne la vitalité, 94,4 % des patients étaient en vie, et aucune différence significative n'a été observée entre les deux groupes (voir Table 2).
+
+```{r, results='hide'}
+# Description globale
+
+# Select variable of interest
+df_clean_EB_sub = df_clean_EB %>% 
+  dplyr::select(alive, W0, W1, W4, W6,diagnostic,level, type_EB,
+                age,age_cat,inclusion_year, last_activity_year)
+# Stat desc for all subjet
+table_globale <- tableone::CreateTableOne(data=df_clean_EB_sub)
+
+# le test de Shapiro-Wilk (H0: normalité)
+df_clean_EB_sub %>%
+    dplyr::select_if(is.numeric) %>%
+    as.list() %>%
+    map(shapiro.test) %>%
+    purrr::keep(~ .x$p.value < 0.05) # W0 et W6, age ne suivent pas loi normale
+
+# Var not normal
+var_non_normal <- c("age","W0","W6")
+
+# Utiliser median à la place de mean pour variable var_non_normal
+stat_strat_all = print(table_globale , 
+      showAllLevels = TRUE,
+      nonnormal = var_non_normal)
+# Exporter les résultats au format CSV
+write.csv2(stat_strat_all, here::here("Resultats/stat_strat_all.csv")) 
+```
+
+```{r, results='hide'}
+# Description par type_EB
+table_strat <- tableone::CreateTableOne( strata = "type_EB" , data = df_clean_EB_sub )
+
+# Utiliser median à la place de mean pour variable var_non_normal
+ma_table_strat <- print(table_strat, 
+	  showAllLevels = TRUE,
+	  nonnormal = var_non_normal,
+	  test=TRUE)
+# Exporter les résultats au format CSV
+write.csv2(ma_table_strat, here::here("Resultats/stat_strat.csv")) 
+```
+
+```{r}
+# Importer les résultats
+stat_strat_all <- read_delim(paste0(here::here("Resultats"), "/stat_strat_all.csv"), delim = ";", escape_double = FALSE, trim_ws = TRUE)
+
+stat_strat <- read_delim(paste0(here::here("Resultats"), "/stat_strat.csv"),
+     delim = ";", escape_double = FALSE, trim_ws = TRUE)
+
+# Select var of interest
+stat_strat = stat_strat[, c("EB simple", "EB jonctionelle", "p")]
+colnames(stat_strat_all) <- c("Variables", "Modalités", "All")
+
+# Combiner les tables
+df_result = cbind.data.frame(stat_strat_all, stat_strat) %>% 
+  dplyr::rename(P.value = p)
+# Remplacer tous les NA par VIDE
+df_result[is.na(df_result)] <- ""
+
+# Final table
+knitr::kable(df_result, caption = "Description des données des patients atteints par EB.")
+```
+
+
+
+## Distribution des types d'EB parmi les patients
+
+Nous examinons la répartition des types d'EB dans notre jeu de données. Sur un total de 160 patients, 82 présentaient une épidermolyse bulleuse simple (EBS), ce qui représente 51,2 % de l'échantillon, tandis que 78 présentaient une épidermolyse bulleuse jonctionnelle (EBJ), représentant 48,8 % de l'échantillon. Les deux groupes présentent une répartition relativement équilibrée (voir figure 2).
+
+```{r, fig.cap="Répartition des types d'Epidermolyse Bulleuse (n = 160)"}
+# Agréger les données par type d'EB et compter le nombre de patients par groupe
+aggregated_data <- df_clean_EB %>%
+  dplyr::group_by(type_EB) %>%
+  summarise(Count = n())
+
+# Calculer les pourcentages
+aggregated_data <- aggregated_data %>%
+  dplyr::mutate(Percentage = Count / sum(Count) * 100)
+
+# Créer le diagramme à barres avec pourcentages
+ggplot2::ggplot(aggregated_data, aes(x = type_EB, y = Percentage, fill = type_EB)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste(Count, " (", sprintf("%.1f", Percentage), "%)", sep = "")), 
+            hjust = -0.2, size = 3.5) +  # Afficher les pourcentages au-dessus des barres
+  labs(title = " ",
+       y = "Pourcentage de patients",
+       x = "Type d'EB") +
+  theme_minimal() + coord_flip() +
+    scale_y_continuous(limits = c(0, 60), breaks = seq(0, 60, 5)) +
+  theme(legend.position = "none")  # Supprimer la légende facultative
+```
+
+
+
+# Analyse de l'évolution de la concentration de plomb chez les patients traités avec le même médicament
+
+L'objectif principal de cette analyse est d'évaluer s'il existe un effet d'interaction statistiquement significatif entre le type d'épidermolyse bulleuse (EB) et la période pendant laquelle la concentration de plomb a été mesurée, afin d'expliquer l'évolution de cette concentration.
+
+## Présentation des données sur le niveau de plomb dans le sang ($\mu$g/dL) sur 6 semaines
+
+
+Nous observons un taux de données manquantes de 43 % pour les variables relatives au niveau de concentration du plomb dans le sang. Deux approches sont envisageables : exclure les patients dont le niveau de concentration du plomb n'est pas renseigné ou utiliser une méthode d'imputation des données manquantes. Nous préférons la première solution, car elle est moins susceptible de biaiser nos analyses sans une expertise métier. Ainsi, nous avons décidé de supprimer les patients avec des valeurs manquantes dans l'une des variables de concentration du plomb dans le sang, soit 62 patients sur 160. Après cette exclusion, notre jeu de données comprendra 98 patients, avec une répartition égale de 50 % pour chaque type d'EB (simple et jonctionnelle). Une transformation de la table est nécessaire. Nous allons convertir la table actuelle en un format long, ce qui donnera une table comportant 4 variables : l'identifiant du patient (id), le type d'EB (type_EB), la semaine (Week) et la concentration de plomb (Concentrat_plomb) (voir table 3).
+
+
+```{r}
+# Select var of interest
+df_clean_EB_C = df_clean_EB %>% dplyr::select(type_EB, W0, W1, W4, W6)
+
+# Drop NA data
+df_clean_EB_C = df_clean_EB_C[complete.cases(df_clean_EB_C), ]
+
+# Rassemblez les colonnes W0, W1, W4 et W6 en format long.
+concentrat_L <- df_clean_EB_C %>% 
+  tidyr::pivot_longer(cols=c(W0, W1, W4, W6),
+               names_to="Week", 
+               values_to="Concentrat_plomb")
+
+# "EB jonctionelle"
+bloc1 = concentrat_L %>% 
+  filter(type_EB=="EB simple", Week=="W0")
+bloc1$id = as.factor(1:nrow(bloc1))
+
+bloc2 = concentrat_L %>% 
+  filter(type_EB=="EB simple", Week=="W1")
+bloc2$id = as.factor(1:nrow(bloc2))
+
+bloc3 = concentrat_L %>% 
+  filter(type_EB=="EB simple", Week=="W4")
+bloc3$id = as.factor(1:nrow(bloc3))
+
+bloc4 = concentrat_L %>% 
+  filter(type_EB=="EB simple", Week=="W6")
+bloc4$id = as.factor(1:nrow(bloc4))
+
+
+# "EB jonctionelle"
+bloc5 = concentrat_L %>% 
+  filter(type_EB=="EB jonctionelle", Week=="W0")
+bloc5$id = as.factor(1:nrow(bloc5))
+
+bloc6 = concentrat_L %>% 
+  filter(type_EB=="EB jonctionelle", Week=="W1")
+bloc6$id = as.factor(1:nrow(bloc6))
+
+bloc7 = concentrat_L %>% 
+  filter(type_EB=="EB jonctionelle", Week=="W4")
+bloc7$id = as.factor(1:nrow(bloc7))
+
+bloc8 = concentrat_L %>% 
+  filter(type_EB=="EB jonctionelle", Week=="W6")
+bloc8$id = as.factor(1:nrow(bloc8))
+
+df_clean_EB_L = rbind.data.frame(bloc1, bloc5,
+                          bloc2, bloc6,
+                          bloc3, bloc7,
+                          bloc4, bloc8)
+head(df_clean_EB_L, 10) %>% knitr::kable(caption = "Les 10 premières observations de la nouvelle table")
+```
+
+Dans cette analyse, l’effet du temps (Week) sur la concentration du plomb est notre variable principale d'intérêt.
+
+Nous partons de l'hypothèse que les patients des deux groupes sont comparables (voir table 2) et que toute différence observée (évolution de la concentration du plomb) ne peut être expliquée que par le type d'EB.
+
+Cependant, nous supposons que l’effet du temps (Week) sera différent selon que le patient présente une épidermolyse bulleuse simple ou jonctionnelle. Dans ce contexte, la variable "type_EB" est considérée comme une variable modératrice.
+
+## Visualisation de l'évolution de la concentration de plomb au fil du temps pour chaque groupe de patients
+
+### Statistiques descriptives
+
+Les données sont regroupées par traitement (type_EB) et temps (Week), puis quelques statistiques sommaires  sont calculées pour la variable concentration de plomb (voir table 4).
+
+
+```{r}
+
+stat_desc = df_clean_EB_L %>%
+  group_by(type_EB, Week) %>%
+  rstatix::get_summary_stats(Concentrat_plomb, show = c("n", "min", "max", "mean", "sd", "se")) 
+stat_desc %>% kable(caption = "Statistiques descriptives sur la concentration du plomb")
+```
+
+### Visualisation
+
+
+```{r, fig.cap="La concentration moyenne du plomb par type d'EB"}
+ggplot(stat_desc) +
+  aes(x=Week, y=mean, fill=as.factor(type_EB) ) + 
+  geom_bar(stat="identity", position=position_dodge()) +
+  scale_fill_brewer(palette="Paired") +
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se), width=.2,
+                 position=position_dodge(.9)) +
+  ggtitle(" ") + 
+  guides(fill=guide_legend(title="Type d'EB"))
+```
+
+
+
+```{r, fig.cap="Boxplot de la concentration du plomb par type EB"}
+bxplt <- ggpubr::ggboxplot(
+  df_clean_EB_L, x = "Week", y = "Concentrat_plomb",
+  color = "type_EB", palette = "jco"
+  )
+
+ggplot(df_clean_EB_L, aes(x=Week, y=Concentrat_plomb, colour=type_EB))+
+  geom_point()+
+  theme(legend.position="none")+
+  geom_boxplot(alpha=0)+
+  labs(title = " ",
+       y = "Concentration du plomb",
+       x = "Week") +
+  geom_line(aes(group=id), colour="grey70")+ 
+  theme_classic() +  
+  scale_color_discrete(name = "Type d'EB")
+```
+
+L'exploration graphique semble indiquer une différence de concentration entre les patients atteints d'EBS et ceux atteints d'EBJ aux moments W1 et W4. En revanche, aucune différence significative n'a été observée aux moments W0 et W6 entre les deux groupes (voir figure 3 & 4).
+
+
+## Comparaison des tendances de concentration de plomb entre les différents types d'EB traités avec le même médicament
+
+### Méthode: ANOVA à deux facteurs sur mesures répétées
+
+Une analyse de variance (ANOVA) à deux facteurs sur mesures répétées peut être réalisée afin de déterminer s'il existe une interaction significative entre le type d'EB et le temps concernant l'évolution de la concentration de plomb dans le sang.
+
+### Vérifications des hypothèses de la méthode
+
+#### Valeurs aberrantes
+
+```{r}
+
+df_clean_EB_L %>%
+  group_by(type_EB, Week) %>%
+  rstatix::identify_outliers(Concentrat_plomb) %>% 
+  kable(caption = "Liste des valeurs aberrantes (n = 8)")
+```
+
+Il y a 8 valeurs aberrantes dans nos données, dont une est extrêmement éloignée des autres. Nous avons décidé de les conserver, étant donné qu'il n'y a pas de moyen de vérifier la véracité de ces valeurs (voir table 5).
+
+#### Normalité
+
+
+```{r}
+df_clean_EB_L %>%
+  group_by(type_EB, Week) %>%
+  rstatix::shapiro_test(Concentrat_plomb) %>% 
+  kable(caption = "Test de normalité", digits = 4)
+```
+
+Le test de Shapiro-Wilk peut être utilisé pour vérifier la normalité pour chaque combinaison de niveaux des facteurs Week et type_EB (voir table 6).
+
+La concentration de plomb n'est pas normalement distribuée à chaque point dans le temps (p < 0,05), à l'exception de l'EB simple à la semaine 4 (W4), comme indiqué par le test de Shapiro-Wilk (voir Table 6).
+
+Pour compléter notre analyse, une approche consiste à utiliser le QQ plot pour vérifier graphiquement la normalité (voire figure 5).
+
+```{r, fig.cap="Vérification de la normalité avec qqplot"}
+ggpubr::ggqqplot(df_clean_EB_L, "Concentrat_plomb", ggtheme = theme_bw()) +
+  facet_grid(Week ~ type_EB, labeller = "label_both")
+```
+
+D'après le graphique (voir figure 5), étant donné que tous les points se situent approximativement le long de la ligne de référence, nous pouvons supposer une distribution normale pour l'ensemble des combinaisons (voir figure 5).
+
+### Test statistique d'Anova
+
+```{r}
+res.aov <- rstatix::anova_test(
+  data = df_clean_EB_L, dv = Concentrat_plomb, wid = id,
+  within = c(type_EB, Week)
+  )
+rstatix::get_anova_table(res.aov) %>% 
+  kable(caption = "Test statistique d'anova")
+```
+
+Il existe une interaction statistiquement significative (p < 0.001) entre le type d'EB et le temps (Week) (voir table 7).
+
+### Tests post-hoc
+
+Une interaction significative à deux facteurs indique que l'effet du type d'EB sur la concentration de plomb dans le sang dépend du niveau de la variable Week. Étant donné cette interaction significative, nous procédons à l'examen de l'effet principal du type d'EB sur la concentration à chaque instant et effectuons des comparaisons par paires
+
+```{r}
+# Effet du type_EB à chaque instant
+one.way <- df_clean_EB_L %>%
+  group_by(Week) %>%
+  anova_test(dv = Concentrat_plomb, wid = id, within = type_EB) %>%
+  get_anova_table() %>%
+  adjust_pvalue(method = "bonferroni")
+one.way%>% kable(caption = "Test d'effet du type d'EB sur la concentration à chaque instant")
+```
+
+En prenant en compte la p-valeur corrigée de Bonferroni (p.adj), nous constatons que l’effet principal du type d’EB n’est pas significatif à W0 (p.adj = 1) et à W6 (p.adj = 0,524). Cependant, il est significatif à W1 (p < 0,001) et à W4 (p < 0,001) (voir table 8).
+
+Remarque : La variable type_EB comporte uniquement deux niveaux ("EBS" et "EBJ") ; ainsi, le test ANOVA et le test t apparié donnent les mêmes valeurs de p. 
+
+Nous réalisons plusieurs comparaisons par paires pour identifier les différences entre les groupes. Nous examinons l'effet du type d'EB sur la concentration de plomb à chaque moment où la mesure a été effectuée.
+
+
+```{r}
+# Comparaisons par paires entre les groupes de malades
+pwc <- df_clean_EB_L %>%
+  group_by(Week) %>%
+  rstatix::pairwise_t_test(
+    Concentrat_plomb ~ type_EB, paired = TRUE,
+    p.adjust.method = "bonferroni"
+    )
+pwc = pwc %>% dplyr::rename(Outcome = .y.) %>%  dplyr::select(-c(statistic, df))
+pwc$Outcome = "Concentration du plomb"
+pwc %>% kable(caption = "Comparaisons par paires entre les groupes de malades")
+```
+
+
+Les comparaisons par paires révèlent que la concentration moyenne de plomb dans le sang diffère significativement entre le groupe des patients atteints d'EBS et le groupe EBJ à W1 (p.adj < 0,001) et à W4 (p.adj < 0,001), mais pas à W0 (p.adj = 0,780) ni à W6 (p.adj = 0,131) (voir table 9).
+
+
+# Résultats
+
+Une analyse de variance à deux facteurs sur mesures répétées a été réalisée pour évaluer l'effet des différents types d'EB sur la concentration de plomb au fil du temps.
+
+Une interaction statistiquement significative entre le type d'EB et le temps (Week) sur la concentration de plomb a été observée (p < 0,0001). Par conséquent, l'effet du type d'EB a été analysé à chaque point temporel (W0, W1, W4, W6). Les valeurs de p ont été ajustées en utilisant la méthode de correction des tests multiples de Bonferroni. L'effet du type d'EB était significatif à W1 (p < 0,001) et à W4 (p < 0,001), mais non significatif à W0 (p = 1) et à W6 (p = 0,52) (voir table 7).
+
+Des comparaisons par paires, réalisées à l'aide du t test par paires, ont montré que la concentration moyenne de plomb était significativement différente entre le groupe EBS et le groupe EBJ aux semaines W1 (p < 0,001) et W4 (p < 0,001), mais non significative aux semaines W0 (p = 0,780) et W6 (p = 0,131) (voir table 9).
+
+
+```{r, fig.cap="Boxplot avec p-values du test statistique"}
+# Visualisation : Boxplots avec p-values
+pwc <- pwc %>% rstatix::add_xy_position(x = "Week")
+bxplt + 
+  ggpubr::stat_pvalue_manual(pwc, tip.length = 0, hide.ns = TRUE) +
+  labs(
+    subtitle = get_test_label(res.aov, detailed = TRUE),
+    caption = get_pwc_label(pwc)
+  )
+```
+
+
+# Discussion
+
+Lorsqu'on examine les résultats sous l'angle des p-values corrigées de Bonferroni (voir figure 6), on constate une différence notable dans l'effet du type d'EB sur la concentration de plomb au fil du temps. Cependant, une analyse plus approfondie révèle des nuances qui demandent une compréhension fine des dynamiques sous-jacentes.
+
+Tout d'abord, il est crucial de noter que l'effet principal du type_EB n'était pas significatif à certains moments (W0 et W6). Ceci suggère une variabilité temporelle dans la relation entre le type d'EB et la concentration de plomb, ce qui pourrait être dû à plusieurs facteurs, y compris des fluctuations environnementales ou des variables non mesurées.
+
+De plus, les comparaisons par paires révèlent des différences significatives entre les groupes EBS et EBJ à certains moments, mais pas à d'autres. Cette variation temporelle dans les différences observées nécessite une analyse plus approfondie pour déterminer les mécanismes sous-jacents qui pourraient influencer ces changements.
+
+Il convient également de souligner que ces résultats soulèvent des questions sur la qualité des données et la robustesse des conclusions tirées. Une analyse approfondie de la méthodologie utilisée, y compris la collecte des données et les techniques d'analyse statistique, est nécessaire pour garantir la fiabilité des résultats.
+
+Enfin, l'absence d'avis d'experts spécialisés dans le domaine de la toxicologie environnementale pourrait limiter la portée et la profondeur de l'interprétation des résultats. L'apport d'experts qualifiés pourrait fournir des perspectives précieuses pour mieux comprendre les implications des résultats et identifier les lacunes dans l'analyse qui nécessitent une attention particulière.
+
+
+# Conclusion
+
+En conclusion, cette étude offre une analyse approfondie de l'épidermolyse bulleuse, une maladie dermatologique rare et complexe. À travers l'exploration des données démographiques des patients et des niveaux de plomb dans le sang, nous avons pu mettre en évidence des différences significatives dans l'évolution de la concentration de plomb au fil du temps en fonction du type d'EB. En effet, une interaction statistiquement significative entre le type d'EB et le temps a été observée, soulignant l'importance de considérer ces deux facteurs dans l'évaluation et la prise en charge de la maladie.
+
+Nos résultats suggèrent que les patients atteints d'épidermolyse bulleuse simple (EBS) et ceux atteints d'épidermolyse bulleuse jonctionnelle (EBJ) présentent des profils distincts en termes de niveaux de plomb dans le sang, en particulier aux semaines W1 et W4. Cependant, ces différences ne sont pas observées de manière constante tout au long de l'étude, ce qui soulève des questions sur les mécanismes sous-jacents et la variabilité temporelle de la réponse au traitement.
+
+Il est crucial de noter que notre analyse a été menée avec rigueur, en tenant compte des limitations telles que les données manquantes et les valeurs aberrantes. Cependant, une analyse plus approfondie de la méthodologie utilisée et une consultation d'experts spécialisés pourraient enrichir notre compréhension des résultats et éclairer de nouvelles pistes de recherche.
+
+En fin, cette étude contribue à combler les lacunes dans la compréhension de l'épidermolyse bulleuse et offre des perspectives pour améliorer la prise en charge et le traitement de cette maladie dermatologique rare.
+
+
